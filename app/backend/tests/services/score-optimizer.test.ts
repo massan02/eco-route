@@ -500,7 +500,7 @@ describe('ScoreOptimizer Service', () => {
   });
 
   describe('Sensitivity Analysis', () => {
-    it.skip('should show how recommendation changes with weight adjustments', () => {
+    it('should show how recommendation changes with weight adjustments', () => {
       // TODO(#issue-2): Implement complete sensitivity analysis with threshold properties
       // Missing: timeThreshold, costThreshold, co2Threshold
       const truckPlan: TransportPlan = {
@@ -531,7 +531,7 @@ describe('ScoreOptimizer Service', () => {
       }
     });
 
-    it.skip('should identify dominant factors', () => {
+    it('should identify dominant factors', () => {
       // TODO(#issue-2): Fix weights parameter handling in identifyDominantFactors
       // Currently throws: Cannot read properties of undefined
       const truckPlan: TransportPlan = {
@@ -585,7 +585,7 @@ describe('ScoreOptimizer Service', () => {
       expect(duration).toBeLessThan(100);
     });
 
-    it.skip('should handle batch comparisons efficiently', () => {
+    it('should handle batch comparisons efficiently', () => {
       // TODO(#issue-2): Fix async/await handling in batchCompare
       // Test needs to await the Promise properly
       const scenarios = [
