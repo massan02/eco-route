@@ -43,11 +43,12 @@ export class RouteCalculator {
   private locationClient: LocationClient;
   private calculatorName: string;
   private routeCache: Map<string, RouteResult> = new Map();
-  private requestQueue: Array<() => Promise<any>> = [];
-  private activeRequests = 0;
-  private maxConcurrentRequests = 5;
-  private requestDelay = 200; // milliseconds
-  private lastRequestTime = 0;
+  private tokenBucket = {
+    tokens: 5,
+    maxTokens: 5,
+    refillRate: 5, // tokens per second
+    lastRefill: Date.now()
+  };
 
   constructor(config: RouteCalculatorConfig) {
     this.calculatorName = config.calculatorName;
@@ -259,8 +260,6 @@ export class RouteCalculator {
     }
     
     return {
-      distanceKm: totalDistance,
-      timeHours: totalTime,
       totalDistanceKm: totalDistance,
       totalTimeHours: totalTime,
       legs
@@ -291,67 +290,44 @@ export class RouteCalculator {
     }
     
     const results: RouteResult[] = [];
-    const batchSize = 5; // Process in batches to avoid rate limiting
-    
-    for (let i = 0; i < pairs.length; i += batchSize) {
-      const batch = pairs.slice(i, i + batchSize);
-      const batchResults = await Promise.all(
-        batch.map(pair => this.calculateTruckRoute(pair.origin, pair.destination))
-      );
-      results.push(...batchResults);
-      
-      // Add small delay between batches to avoid rate limiting
-      if (i + batchSize < pairs.length) {
-        await new Promise(resolve => setTimeout(resolve, this.requestDelay));
-      }
+
+    // Process all pairs with individual throttling
+    for (const pair of pairs) {
+      const result = await this.calculateTruckRoute(pair.origin, pair.destination);
+      results.push(result);
     }
-    
+
     return results;
   }
 
   /**
-   * Throttle requests to respect rate limits
+   * Acquire a token from the token bucket for rate limiting
+   */
+  private async acquireToken(): Promise<void> {
+    const now = Date.now();
+    const timePassed = (now - this.tokenBucket.lastRefill) / 1000;
+    const tokensToAdd = Math.min(
+      timePassed * this.tokenBucket.refillRate,
+      this.tokenBucket.maxTokens - this.tokenBucket.tokens
+    );
+
+    this.tokenBucket.tokens += tokensToAdd;
+    this.tokenBucket.lastRefill = now;
+
+    if (this.tokenBucket.tokens < 1) {
+      const waitTime = (1 - this.tokenBucket.tokens) / this.tokenBucket.refillRate * 1000;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+      return this.acquireToken();
+    }
+
+    this.tokenBucket.tokens -= 1;
+  }
+
+  /**
+   * Throttle requests to respect rate limits using Token Bucket algorithm
    */
   private async throttleRequest<T>(fn: () => Promise<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
-      const execute = async () => {
-        // Enforce delay between requests
-        const now = Date.now();
-        const timeSinceLastRequest = now - this.lastRequestTime;
-        if (timeSinceLastRequest < this.requestDelay) {
-          await new Promise(r => setTimeout(r, this.requestDelay - timeSinceLastRequest));
-        }
-        
-        if (this.activeRequests >= this.maxConcurrentRequests) {
-          // Queue the request
-          this.requestQueue.push(() => fn().then(resolve).catch(reject));
-          return;
-        }
-
-        this.activeRequests++;
-        this.lastRequestTime = Date.now();
-        
-        try {
-          const result = await fn();
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        } finally {
-          this.activeRequests--;
-          
-          // Process next queued request with delay
-          if (this.requestQueue.length > 0) {
-            setTimeout(() => {
-              const next = this.requestQueue.shift();
-              if (next) {
-                next();
-              }
-            }, this.requestDelay);
-          }
-        }
-      };
-      
-      execute();
-    });
+    await this.acquireToken();
+    return fn();
   }
 }
